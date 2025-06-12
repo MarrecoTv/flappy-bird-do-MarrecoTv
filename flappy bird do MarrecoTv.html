@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Pássaro Saltitante - Clássico</title>
+    <!-- Carrega a biblioteca para gerar sons -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <style>
+        body {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background-color: #1a1a1a;
+            font-family: 'Press Start 2P', cursive; /* Fonte estilo pixel */
+            color: white;
+            touch-action: none; /* Desabilita zoom com toque duplo em mobile */
+        }
+        /* Importa as fontes do Google Fonts */
+        @import url('https://fonts.googleapis.com/css2?family=Anton&family=Press+Start+2P&display=swap');
+        
+        canvas {
+            border: 2px solid #333;
+            background-color: #4ec0ca; /* Azul do Flappy Bird */
+        }
+        #container {
+            text-align: center;
+        }
+        #instrucoes {
+            margin-top: 15px;
+            font-size: 1em;
+            color: #eee;
+            text-shadow: 2px 2px #333;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <canvas id="gameCanvas" width="400" height="600"></canvas>
+        <div id="instrucoes">Toque ou Espaço para Pular</div>
+    </div>
+
+    <script>
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const instrucoes = document.getElementById('instrucoes');
+
+        // --- Variáveis do Jogo ---
+        let bird, pipes, score, frame, gameState, groundX;
+        let clouds = [];
+
+        // --- Constantes ---
+        const GRAVITY = 0.4;
+        const FLAP_STRENGTH = -7;
+        const PIPE_WIDTH = 80;
+        const PIPE_GAP = 160;
+        const PIPE_SPEED = 3;
+        const PIPE_INTERVAL = 90; 
+        const GROUND_HEIGHT = 100;
+        
+        // --- Sons (Tone.js) ---
+        let soundsReady = false;
+        let audioStarted = false; // Flag para garantir que o Tone.start() seja chamado apenas uma vez
+        let flapSound, scoreSound, hitSound, fallSound;
+
+        // Função para configurar e carregar os sons.
+        function setupAndLoadSounds() {
+            instrucoes.innerText = 'A carregar sons...';
+
+            // Sintetizadores são criados instantaneamente
+            scoreSound = new Tone.Synth({ oscillator: { type: 'sine' }, envelope: { attack: 0.01, decay: 0.1, sustain: 0.1, release: 0.1 } }).toDestination();
+            hitSound = new Tone.MembraneSynth({ pitchDecay: 0.05, octaves: 10, envelope: { attack: 0.01, decay: 0.4, sustain: 0.01, release: 1.4, attackCurve: 'exponential' } }).toDestination();
+            
+            // Os Players precisam carregar os ficheiros de áudio (buffers).
+            flapSound = new Tone.Player("data:audio/wav;base64,UklGRigAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhAgAAAAEA").toDestination();
+            fallSound = new Tone.Player("data:audio/wav;base64,UklGRlIAAABXQVZFZm10IBIAAAABAAEARKwAAIhYAQACABAAAABkYXRhSAAAAAEA////AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAgMEBAcICQoLCwwNDg8REhMUFRYXGBkaGxwdHh8gISIjJCUmJygpKissLS4vMDEyMzQ1Njc4OTo7PD0+P0BBQkNERUZHSElKS0xNTk9QUVJTVFVWV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dZXV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dZXV1hZWltcXV5fYGFiY2RlZmdoaWprbG1ub3BxcnN0dXZ3eHl6e3x9fn+AgYKDhIWGh4iJiouMjY6PkJGSk5SVlpeYmZqbnJ2en6ChoqOkpaanqKmqq6ytrq+wsbKztLW2t7i5uru8vb6/wMHCw8TFxsfIycrLzM3Oz9DR0tPU1dY=").toDestination();
+
+            // Tone.loaded() retorna uma Promise que resolve quando todos os buffers de áudio estiverem carregados.
+            Tone.loaded().then(() => {
+                soundsReady = true;
+                instrucoes.innerText = 'Toque ou Espaço para Pular';
+            }).catch(error => {
+                console.error("Erro ao carregar os sons: ", error);
+                instrucoes.innerText = 'Erro ao carregar sons. Jogue sem áudio.';
+            });
+        }
+
+        // --- Desenhar Elementos ---
+        function drawBackgroundText() {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.2)'; // Branco semi-transparente
+            ctx.font = '50px "Press Start 2P"';
+            ctx.textAlign = 'center';
+            ctx.fillText('MarrecoTv', canvas.width / 2, canvas.height / 2);
+        }
+
+        function drawBird() {
+            ctx.save();
+            ctx.translate(bird.x + bird.width / 2, bird.y + bird.height / 2);
+            // Rotaciona o pássaro baseado na velocidade. Máximo de 90 graus para baixo.
+            let angle = Math.min(Math.PI / 2, bird.velocity * 0.1);
+            ctx.rotate(angle);
+            
+            // Corpo
+            ctx.fillStyle = '#f7e64f';
+            ctx.fillRect(-bird.width / 2, -bird.height / 2, bird.width, bird.height);
+            // Bico
+            ctx.fillStyle = '#f2a626';
+            ctx.fillRect(5, -2, 15, 4);
+            // Olho
+            ctx.fillStyle = 'white';
+            ctx.beginPath();
+            ctx.arc(0, -5, 5, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = 'black';
+            ctx.beginPath();
+            ctx.arc(1, -5, 2, 0, Math.PI * 2);
+            ctx.fill();
+
+            ctx.restore();
+        }
+
+        function drawPipes() {
+            for (let p of pipes) {
+                ctx.fillStyle = '#73bf2f'; // Verde do cano
+                // Cano superior
+                ctx.fillRect(p.x, 0, PIPE_WIDTH, p.topHeight);
+                // "Boca" do cano superior
+                ctx.fillRect(p.x - 5, p.topHeight - 30, PIPE_WIDTH + 10, 30);
+                
+                // Cano inferior
+                const bottomY = p.topHeight + PIPE_GAP;
+                ctx.fillRect(p.x, bottomY, PIPE_WIDTH, canvas.height - bottomY - GROUND_HEIGHT);
+                // "Boca" do cano inferior
+                ctx.fillRect(p.x - 5, bottomY, PIPE_WIDTH + 10, 30);
+            }
+        }
+        
+        function drawGround() {
+            for (let i = 0; i < 20; i++) {
+                ctx.fillStyle = (i % 2 === 0) ? '#e5d17c' : '#d4c06b';
+                ctx.fillRect((groundX + i * 20) % (canvas.width + 20) - 20, canvas.height - GROUND_HEIGHT, 20, GROUND_HEIGHT);
+            }
+        }
+        
+        function drawClouds() {
+            ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+            for(let cloud of clouds) {
+                ctx.beginPath();
+                ctx.arc(cloud.x, cloud.y, cloud.size, 0, Math.PI * 2);
+                ctx.arc(cloud.x + cloud.size * 0.8, cloud.y, cloud.size * 1.2, 0, Math.PI * 2);
+                ctx.arc(cloud.x - cloud.size * 0.8, cloud.y, cloud.size * 1.2, 0, Math.PI * 2);
+                ctx.fill();
+            }
+        }
+
+        function drawScore() {
+            ctx.fillStyle = 'white';
+            ctx.font = '50px "Press Start 2P"';
+            ctx.strokeStyle = 'black';
+            ctx.lineWidth = 3;
+            const text = score.toString();
+            const textWidth = ctx.measureText(text).width;
+            ctx.strokeText(text, (canvas.width - textWidth) / 2, 70);
+            ctx.fillText(text, (canvas.width - textWidth) / 2, 70);
+        }
+
+        function drawStartScreen() {
+            ctx.textAlign = 'center';
+            ctx.font = '30px "Press Start 2P"';
+            ctx.fillText('Get Ready!', canvas.width / 2, canvas.height / 2 - 100);
+            ctx.font = '16px "Press Start 2P"';
+            ctx.fillText('Toque ou Espaço', canvas.width / 2, canvas.height / 2 - 50);
+        }
+
+        function drawGameOverScreen() {
+            ctx.textAlign = 'center';
+            ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            // Texto de Game Over com estilo GTA
+            ctx.fillStyle = '#D8000C'; // Vermelho forte
+            ctx.strokeStyle = 'black'; // Contorno preto
+            ctx.lineWidth = 4;         // Largura do contorno ajustada
+            ctx.font = '60px "Anton", sans-serif'; // Fonte gorda e tamanho menor
+            
+            const gameOverText = 'SE FODEU';
+            // Desenha o contorno primeiro
+            ctx.strokeText(gameOverText, canvas.width / 2, canvas.height / 2 - 80);
+            // Desenha o preenchimento por cima
+            ctx.fillText(gameOverText, canvas.width / 2, canvas.height / 2 - 80);
+            
+            // Restaura a cor e a fonte para os outros textos
+            ctx.fillStyle = 'white'; 
+            ctx.font = '24px "Press Start 2P"';
+            ctx.fillText(`Score: ${score}`, canvas.width / 2, canvas.height / 2);
+            
+            ctx.font = '16px "Press Start 2P"';
+            ctx.fillText('Clique para tentar de novo', canvas.width / 2, canvas.height / 2 + 50);
+        }
+        
+        // --- Lógica do Jogo ---
+        function update() {
+            if (gameState === 'hit') {
+                // Deixa o pássaro cair após a batida
+                bird.velocity += GRAVITY * 2;
+                bird.y += bird.velocity;
+                if(bird.y + bird.height > canvas.height - GROUND_HEIGHT) {
+                    gameState = 'gameOver';
+                }
+                return;
+            }
+
+            if (gameState !== 'playing') return;
+
+            // Gravidade do Pássaro
+            bird.velocity += GRAVITY;
+            bird.y += bird.velocity;
+
+            // Gerar Canos
+            if (frame % PIPE_INTERVAL === 0) {
+                const topHeight = Math.floor(Math.random() * (canvas.height - GROUND_HEIGHT - PIPE_GAP - 100)) + 50;
+                pipes.push({ x: canvas.width, topHeight: topHeight, scored: false });
+            }
+
+            // Mover Canos, Chão e Nuvens
+            for (let p of pipes) {
+                p.x -= PIPE_SPEED;
+                if (!p.scored && p.x + PIPE_WIDTH < bird.x) {
+                    score++;
+                    p.scored = true;
+                    if(soundsReady) scoreSound.triggerAttackRelease("C5", "8n");
+                }
+            }
+            groundX = (groundX - PIPE_SPEED) % 20;
+            clouds.forEach(c => c.x -= PIPE_SPEED * 0.5);
+
+            // Remover elementos que saíram da tela
+            pipes = pipes.filter(p => p.x + PIPE_WIDTH > 0);
+            clouds = clouds.filter(c => c.x + c.size * 2 > 0);
+            if(Math.random() < 0.01) { // Chance de gerar nova nuvem
+                clouds.push({
+                    x: canvas.width + 50,
+                    y: Math.random() * (canvas.height - 300) + 50,
+                    size: Math.random() * 20 + 15
+                });
+            }
+            
+            checkCollision();
+            frame++;
+        }
+        
+        function checkCollision() {
+            // Colisão com o chão
+            if (bird.y + bird.height > canvas.height - GROUND_HEIGHT) {
+                bird.y = canvas.height - GROUND_HEIGHT - bird.height;
+                setGameOver();
+            }
+
+            // Colisão com o teto
+            if (bird.y < 0) {
+                bird.y = 0;
+                bird.velocity = 0;
+            }
+
+            // Colisão com os canos
+            for (let p of pipes) {
+                if (bird.x < p.x + PIPE_WIDTH &&
+                    bird.x + bird.width > p.x &&
+                    (bird.y < p.topHeight || bird.y + bird.height > p.topHeight + PIPE_GAP)) {
+                    setGameOver();
+                }
+            }
+        }
+
+        function setGameOver() {
+            if(gameState === 'playing') {
+                if(soundsReady) hitSound.triggerAttackRelease("C2", "8n");
+                setTimeout(() => {
+                    if(soundsReady) fallSound.start();
+                }, 150);
+                gameState = 'hit'; // Estado de transição
+            }
+        }
+
+        // --- Loop Principal ---
+        function loop() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            
+            // Desenha o fundo
+            ctx.fillStyle = '#4ec0ca';
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            
+            drawBackgroundText(); // Adicionado o texto de fundo
+            drawClouds();
+            drawPipes();
+            drawGround();
+            drawBird();
+            update();
+            drawScore();
+            
+            if (gameState === 'getReady') {
+                drawStartScreen();
+            } else if (gameState === 'gameOver') {
+                drawGameOverScreen();
+            }
+
+            requestAnimationFrame(loop);
+        }
+
+        // --- Controles ---
+        function flap() {
+            bird.velocity = FLAP_STRENGTH;
+            if(soundsReady) flapSound.start();
+        }
+
+        function handleInput() {
+            // Não faz nada se os sons não estiverem prontos
+            if (!soundsReady) return;
+
+            // O contexto de áudio do Tone.js precisa ser iniciado por um gesto do utilizador.
+            if (!audioStarted) {
+                Tone.start();
+                audioStarted = true;
+            }
+
+            if (gameState === 'getReady') {
+                gameState = 'playing';
+                flap();
+            } else if (gameState === 'playing') {
+                flap();
+            } else if (gameState === 'gameOver') {
+                resetGame();
+            }
+        }
+        
+        function resetGame() {
+            bird = { x: 80, y: 250, width: 34, height: 24, velocity: 0 };
+            pipes = [];
+            score = 0;
+            frame = 0;
+            groundX = 0;
+            clouds = [];
+            gameState = 'getReady';
+            // A mensagem será atualizada quando os sons carregarem
+            if (!soundsReady) {
+                instrucoes.innerText = 'A carregar sons...';
+            } else {
+                instrucoes.innerText = 'Toque ou Espaço para Pular';
+            }
+            audioStarted = false;
+        }
+
+        // Adiciona os listeners de evento
+        document.addEventListener('click', handleInput);
+        document.addEventListener('keydown', (e) => {
+            if (e.code === 'Space') {
+                // Impede que a página role para baixo
+                e.preventDefault();
+                handleInput();
+            }
+        });
+
+        // Inicia o jogo
+        resetGame();
+        loop();
+        setupAndLoadSounds(); // Inicia o carregamento dos sons
+
+    </script>
+</body>
+</html>
